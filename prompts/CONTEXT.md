@@ -50,6 +50,7 @@ Write a concise (~250-word) context briefing covering:
    - permission handlers
    - navigation/window-opening handlers
    - CSP-related configuration
+   - Electron fuses configuration
 
    If a value is defined elsewhere, use GREP to find the actual configuration.
 

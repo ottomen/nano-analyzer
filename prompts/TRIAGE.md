@@ -81,7 +81,5 @@ Respond ONLY with JSON:
 **Code from {filepath}:**
 
 ```ts
-{
-  code;
-}
+{code}
 ```

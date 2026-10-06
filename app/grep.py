@@ -135,7 +135,7 @@ def execute_grep_requests(response_text, repo_dir):
                 if raw:
                     raw = raw.replace(repo_dir.rstrip("/") + "/", "")
                     lines_filtered = [l for l in raw.splitlines()
-                                      if re.search(r'\.[ch]:', l)]
+                                      if re.search(r'\.(?:ts|js|tsx|jsx):', l)]
                     return "\n".join(lines_filtered)
                 return ""
             else:
@@ -144,7 +144,8 @@ def execute_grep_requests(response_text, repo_dir):
                 flags = ["--fixed-strings"] if fixed else []
                 proc = subprocess.run(
                     [_rg_path, "--no-heading", "-n"] + flags +
-                    ["-g", "*.c", "-g", "*.h", pattern],
+                    ["-g", "*.ts", "-g", "*.js", "-g",
+                        "*.jsx", "-g", "*.tsx", pattern],
                     capture_output=True, text=True, timeout=60,
                     cwd=repo_dir, errors="replace",
                 )

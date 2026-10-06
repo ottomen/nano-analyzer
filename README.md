@@ -91,25 +91,25 @@ python3 scan.py ./src --triage-rounds 7
 
 ### All flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `path` | *(required)* | File or directory to scan |
-| `--model` | `gpt-5.4-nano` | Model for all stages (context, scan, triage) |
-| `--parallel` | `50` | Max concurrent scan API calls |
-| `--triage-threshold` | `medium` | Triage findings at or above this severity |
-| `--triage-rounds` | `5` | Triage rounds per finding |
-| `--triage-parallel` | `50` | Max concurrent triage API calls |
-| `--max-connections` | `parallel + triage-parallel` | Total API call cap |
-| `--min-confidence` | `0.0` | Only show findings above this confidence (0.0–1.0) |
-| `--project` | directory name | Project name used in triage prompts |
-| `--repo-dir` | auto | Repo root for grep lookups (auto: parent dir for files, scan dir for folders) |
-| `--output-dir` | `~/nano-analyzer-results/<timestamp>/` | Where to save results |
-| `--max-chars` | `200,000` | Skip files larger than this |
-| `--verbose-triage` | off | Show per-round triage progress |
+| Flag                 | Default                                | Description                                                                   |
+| -------------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
+| `path`               | _(required)_                           | File or directory to scan                                                     |
+| `--model`            | `gpt-5.4-nano`                         | Model for all stages (context, scan, triage)                                  |
+| `--parallel`         | `50`                                   | Max concurrent scan API calls                                                 |
+| `--triage-threshold` | `medium`                               | Triage findings at or above this severity                                     |
+| `--triage-rounds`    | `5`                                    | Triage rounds per finding                                                     |
+| `--triage-parallel`  | `50`                                   | Max concurrent triage API calls                                               |
+| `--max-connections`  | `parallel + triage-parallel`           | Total API call cap                                                            |
+| `--min-confidence`   | `0.0`                                  | Only show findings above this confidence (0.0–1.0)                            |
+| `--project`          | directory name                         | Project name used in triage prompts                                           |
+| `--repo-dir`         | auto                                   | Repo root for grep lookups (auto: parent dir for files, scan dir for folders) |
+| `--output-dir`       | `~/nano-analyzer-results/<timestamp>/` | Where to save results                                                         |
+| `--max-chars`        | `200,000`                              | Skip files larger than this                                                   |
+| `--verbose-triage`   | off                                    | Show per-round triage progress                                                |
 
 ## Output
 
-Results are saved to `~/nano-analyzer-results/<timestamp>/` (or `--output-dir`):
+Results are saved to `./nano-analyzer-results/<timestamp>/` (or `--output-dir`):
 
 ```
 <timestamp>/
@@ -131,7 +131,7 @@ Results are saved to `~/nano-analyzer-results/<timestamp>/` (or `--output-dir`):
 When a scan finds a medium-or-above severity issue, the triage pipeline kicks in:
 
 1. A skeptical reviewer examines the finding against the actual code and can **grep the codebase** to verify or refute claimed defenses.
-2. This repeats for multiple rounds (default: 5), with each reviewer seeing prior arguments and encouraged to find *new* evidence rather than rehash old points.
+2. This repeats for multiple rounds (default: 5), with each reviewer seeing prior arguments and encouraged to find _new_ evidence rather than rehash old points.
 3. A final **arbiter** reads all rounds and makes a VALID/INVALID call.
 4. The confidence score (e.g. 80% \[VVIVV→V\]) reflects the fraction of rounds that said VALID.
 
