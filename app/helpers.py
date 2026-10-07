@@ -7,8 +7,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -36,13 +35,19 @@ def resolve_backend(model, keys):
                 "but OPENROUTER_API_KEY is not set.",
                 file=sys.stderr,
             )
-            print("   Set it with:  export OPENROUTER_API_KEY=sk-or-...",
-                  file=sys.stderr)
+            print(
+                "   Set it with:  export OPENROUTER_API_KEY=sk-or-...", file=sys.stderr
+            )
             sys.exit(1)
-        return os.getenv("OPENROUTER_API_URL"), api_key, model, {
-            "HTTP-Referer": "https://github.com/weareaisle/nano-analyzer",
-            "X-Title": "nano-analyzer",
-        }
+        return (
+            os.getenv("OPENROUTER_API_URL"),
+            api_key,
+            model,
+            {
+                "HTTP-Referer": "https://github.com",
+                "X-Title": "nano-analyzer",
+            },
+        )
 
     api_key = keys.get("OPENAI_API_KEY")
     if not api_key:
@@ -77,7 +82,9 @@ def init_api_semaphore(max_concurrent):
     _api_semaphore = threading.Semaphore(max_concurrent)
 
 
-def call_llm(model, messages, keys, json_mode=False, max_retries=3, reasoning_effort=None):
+def call_llm(
+    model, messages, keys, json_mode=False, max_retries=3, reasoning_effort=None
+):
     api_url, api_key, model_name, extra_headers = resolve_backend(model, keys)
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -96,7 +103,7 @@ def call_llm(model, messages, keys, json_mode=False, max_retries=3, reasoning_ef
         time.sleep(
             random.uniform(0.1, 3.0)
             if attempt == 0
-            else 2 ** attempt + random.uniform(0, 2)
+            else 2**attempt + random.uniform(0, 2)
         )
         try:
             t0 = time.time()
@@ -113,7 +120,7 @@ def call_llm(model, messages, keys, json_mode=False, max_retries=3, reasoning_ef
                 elapsed = time.time() - t0
 
             if status_code == 429 or status_code >= 500:
-                time.sleep(2 ** attempt + random.uniform(0, 1))
+                time.sleep(2**attempt + random.uniform(0, 1))
                 continue
 
             if status_code != 200:
@@ -139,7 +146,7 @@ def call_llm(model, messages, keys, json_mode=False, max_retries=3, reasoning_ef
                 response_text = str(e)
 
             if status_code == 429 or status_code >= 500:
-                time.sleep(2 ** attempt + random.uniform(0, 1))
+                time.sleep(2**attempt + random.uniform(0, 1))
                 continue
 
             raise RuntimeError(f"API {status_code}: {response_text[:200]}")
@@ -153,7 +160,8 @@ def call_llm(model, messages, keys, json_mode=False, max_retries=3, reasoning_ef
         ) as e:
             if attempt == max_retries - 1:
                 raise RuntimeError(
-                    f"Connection failed after {max_retries} retries: {e}")
-            time.sleep(2 ** attempt + random.uniform(0, 1))
+                    f"Connection failed after {max_retries} retries: {e}"
+                )
+            time.sleep(2**attempt + random.uniform(0, 1))
 
     raise RuntimeError("Max retries exceeded")

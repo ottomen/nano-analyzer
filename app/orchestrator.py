@@ -1,43 +1,45 @@
-from .constants import DEFAULT_EXTENSIONS, VERDICT_EMOJI
-from .triage import triage_finding
-from .parsers import extract_findings, _extract_json, parse_findings
-from .scanners import scan_single_file
-from .grep import execute_grep_requests, init_grep_index
-from .helpers import init_api_semaphore, load_api_keys, call_llm
 import json
 import os
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from .constants import SEVERITY_LEVELS
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+
+from .constants import DEFAULT_EXTENSIONS, SEVERITY_LEVELS, VERDICT_EMOJI
 from .discovery import discover_files
+from .grep import execute_grep_requests, init_grep_index
+from .helpers import call_llm, init_api_semaphore, load_api_keys
+from .parsers import _extract_json, extract_findings, parse_findings
+from .scanners import scan_single_file
+from .triage import triage_finding
 
 load_dotenv()
+
+VERSION = os.getenv("VERSION")
 
 
 def _condense_prior_greps(reasoning_text, max_lines_per_pattern=3):
     """Replace full grep output in prior-round reasoning with a compact
     summary that preserves key evidence without context bloat."""
-    match = re.search(r'\n\n\[GREP RESULTS[^\]]*\]:\n', reasoning_text)
+    match = re.search(r"\n\n\[GREP RESULTS[^\]]*\]:\n", reasoning_text)
     if not match:
         return reasoning_text
 
-    before = reasoning_text[:match.start()]
+    before = reasoning_text[: match.start()]
     grep_section = reasoning_text[match.end():]
 
     condensed = []
     for pattern, content in re.findall(
-        r'GREP `([^`]*)`:\n```\n(.*?)\n```', grep_section, re.DOTALL
+        r"GREP `([^`]*)`:\n```\n(.*?)\n```", grep_section, re.DOTALL
     ):
         content = content.strip()
-        if not content or content == '(no matches in repo)':
+        if not content or content == "(no matches in repo)":
             condensed.append(f"  - `{pattern}`: (no matches)")
         else:
-            lines = [l for l in content.split('\n') if l.strip()]
+            lines = [l for l in content.split("\n") if l.strip()]
             shown = lines[:max_lines_per_pattern]
             extra = len(lines) - len(shown)
             for line in shown:
@@ -48,6 +50,7 @@ def _condense_prior_greps(reasoning_text, max_lines_per_pattern=3):
     if condensed:
         return before + "\n\n[Prior grep evidence]:\n" + "\n".join(condensed)
     return before
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator
@@ -69,13 +72,14 @@ TTT#####V           V#####TTT
 III####V             V####III
 III###V               V###III
 III##V  \033[30mNANO-ANALYZER\033[32m  V##III
-III#V    \033[90mversion \033[30m{os.getenv("VERSION")}    \033[32mV#III
+III#V    \033[90mversion \033[30m{VERSION}    \033[32mV#III
 IIIV                     VIII
           \033[92mA I S L E
     \033[0m"""
 
     logo_str = "".join(
-        [f"{' ' * offset_spaces}{line}\n" for line in logo_str.split("\n")])
+        [f"{' ' * offset_spaces}{line}\n" for line in logo_str.split("\n")]
+    )
 
     print(logo_str)
 
@@ -114,12 +118,14 @@ def run_scan(args):
         repo_dir = os.path.abspath(args.path)
 
     # Timestamp for output directory
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d_%H%M%S")
     if args.output_dir:
         out_dir = args.output_dir
     else:
-        out_dir = os.path.join(os.path.expanduser(
-            "~/work/security-inference/nano-analyzer-results"), timestamp)
+        out_dir = os.path.join(
+            os.path.expanduser("./analyzer-results"),
+            timestamp,
+        )
     os.makedirs(out_dir, exist_ok=True)
 
     # Triage config
@@ -144,11 +150,12 @@ def run_scan(args):
 
     # Pre-scan summary
     print_logo()
-    print("🔍 nano-analyzer vulnerability scanner")
-    print(f"📂 Target: {os.path.abspath(args.path)}")
-    print(f"🔎 Grep dir: {repo_dir}")
+    print("nano-analyzer vulnerability scanner started")
+    print(f"➜ Target: {os.path.abspath(args.path)}")
+    print(f"➜ Grep dir: {repo_dir}")
     print(
-        f"📄 {len(scannable)} files to scan ({total_lines:,} lines, {total_chars:,} chars)")
+        f"➜ {len(scannable)} files to scan ({total_lines:,} lines, {total_chars:,} chars)"
+    )
     if skipped:
         skip_ext = sum(1 for _, r in skipped if r == "extension")
         skip_size = sum(1 for _, r in skipped if "large" in r)
@@ -161,14 +168,17 @@ def run_scan(args):
         if skip_other:
             parts.append(f"{skip_other} unreadable")
         print(f"   ⏭️  {len(skipped)} skipped ({', '.join(parts)})")
-    print(f"🤖 Model: {args.model}")
+    print(f"➜ Model: {args.model}")
     print(
-        f"⚡ Parallelism: {args.parallel} scan, {args.triage_parallel} triage")
-    print(f"💾 Results → {out_dir}/")
+        f"➜ Parallelism: {args.parallel} scan, {args.triage_parallel} triage")
+    print(f"➜ Results: {out_dir}/")
     if do_triage:
         rounds_str = f", {triage_rounds} rounds" if triage_rounds > 1 else ""
-        print(f"🔬 Triage: {triage_threshold}+ findings → skeptical review ({rounds_str.lstrip(', ')})" if triage_rounds >
-              1 else f"🔬 Triage: {triage_threshold}+ findings → skeptical review")
+        print(
+            f"➜ Triage: {triage_threshold}+ findings → skeptical review ({rounds_str.lstrip(', ')})"
+            if triage_rounds > 1
+            else f"➜ Triage: {triage_threshold}+ findings → skeptical review"
+        )
     print()
 
     # Run scans (and inline triage)
@@ -191,8 +201,11 @@ def run_scan(args):
             active_scans[0] += 1
         try:
             result = scan_single_file(
-                filepath, code, display_name,
-                args.model, keys,
+                filepath,
+                code,
+                display_name,
+                args.model,
+                keys,
                 repo_dir=repo_dir,
             )
         finally:
@@ -231,36 +244,43 @@ def run_scan(args):
 
             sc = active_scans[0]
             tc = active_triages[0]
-            ts = datetime.now().strftime("%H:%M:%S")
+            ts = datetime.now(tz=timezone.utc).strftime("%H:%M:%S")
             load = f"[LLMs running S:{sc} T:{tc}]"
 
             if result["status"] == "error":
                 print(
-                    f"  {ts} [file {completed:>{cw}}/{total}] ❌ {short_name}  ERROR: {result['error'][:50]}  {load}")
+                    f"  {ts} [file {completed:>{cw}}/{total}] ❌ {short_name}  ERROR: {result['error'][:50]}  {load}"
+                )
             else:
                 dots = ""
-                for lev, em in [("critical", "🔴"), ("high", "🟠"),
-                                ("medium", "🟡"), ("low", "🔵")]:
+                for lev, em in [
+                    ("critical", "🔴"),
+                    ("high", "🟠"),
+                    ("medium", "🟡"),
+                    ("low", "🔵"),
+                ]:
                     dots += em * sevs.get(lev, 0)
 
                 ctx_link = os.path.join(out_dir, f"{safename}.context.md")
                 scan_link = os.path.join(out_dir, f"{safename}.md")
                 if dots:
                     print(
-                        f"  {ts} [file {completed:>{cw}}/{total}] {dots} {short_name}  {elapsed:.0f}s  {load}")
+                        f"  {ts} [file {completed:>{cw}}/{total}] {dots} {short_name}  {elapsed:.0f}s  {load}"
+                    )
                 else:
                     print(
-                        f"  {ts} [file {completed:>{cw}}/{total}] ⬜ {short_name}  {elapsed:.0f}s  {load}")
+                        f"  {ts} [file {completed:>{cw}}/{total}] {short_name}  {elapsed:.0f}s  {load}"
+                    )
                 if result["status"] == "ok":
-                    print(f"         📋 {ctx_link}")
-                    print(f"         📄 {scan_link}")
+                    print(f"          {ctx_link}")
+                    print(f"          {scan_link}")
 
         # Queue triage work (non-blocking — fires and forgets into triage executor)
         result["_triage_pending"] = []
         if do_triage and result["status"] == "ok":
             needs_triage = any(
                 result["severities"].get(lev, 0) > 0
-                for lev in SEVERITY_LEVELS[:thresh_idx + 1]
+                for lev in SEVERITY_LEVELS[: thresh_idx + 1]
             )
             if needs_triage:
                 findings = extract_findings(result["report"])
@@ -268,10 +288,13 @@ def run_scan(args):
                 for title, text in findings:
                     finding_sev = None
                     for lev in SEVERITY_LEVELS:
-                        if re.search(r'\b' + lev + r'\b', text[:200], re.IGNORECASE):
+                        if re.search(r"\b" + lev + r"\b", text[:200], re.IGNORECASE):
                             finding_sev = lev
                             break
-                    if finding_sev is None or SEVERITY_LEVELS.index(finding_sev) > thresh_idx:
+                    if (
+                        finding_sev is None
+                        or SEVERITY_LEVELS.index(finding_sev) > thresh_idx
+                    ):
                         continue
                     to_triage.append((title, text))
 
@@ -280,14 +303,20 @@ def run_scan(args):
                 def _triage_one_finding(t_title, t_text, t_code, t_display, t_short):
                     """Run all triage rounds for one finding, print result, append."""
                     try:
-                        return _triage_one_finding_inner(t_title, t_text, t_code, t_display, t_short)
+                        return _triage_one_finding_inner(
+                            t_title, t_text, t_code, t_display, t_short
+                        )
                     except Exception as e:
                         with print_lock:
-                            ts = datetime.now().strftime("%H:%M:%S")
+                            ts = datetime.now(
+                                tz=timezone.utc).strftime("%H:%M:%S")
                             print(
-                                f"  {ts} ❌ TRIAGE ERROR {t_short}: {t_title[:40]}... — {e}")
+                                f"  {ts} ❌ TRIAGE ERROR {t_short}: {t_title[:40]}... — {e}"
+                            )
 
-                def _triage_one_finding_inner(t_title, t_text, t_code, t_display, t_short):
+                def _triage_one_finding_inner(
+                    t_title, t_text, t_code, t_display, t_short
+                ):
                     round_verdicts = []
                     prior = None
                     for rn in range(1, triage_rounds + 1):
@@ -296,8 +325,13 @@ def run_scan(args):
                                 active_triages[0] += 1
                             try:
                                 tv = triage_finding(
-                                    t_title, t_text, t_code, t_display,
-                                    project_name, args.model, keys,
+                                    t_title,
+                                    t_text,
+                                    t_code,
+                                    t_display,
+                                    project_name,
+                                    args.model,
+                                    keys,
                                     prior_reasoning=prior,
                                     repo_dir=repo_dir,
                                     file_context=file_context,
@@ -317,16 +351,23 @@ def run_scan(args):
 
                         # Print partial progress per round
                         if triage_rounds > 1 and verbose_triage:
-                            history = "".join(VERDICT_EMOJI.get(
-                                rv["verdict"], "❓") for rv in round_verdicts)
+                            history = "".join(
+                                VERDICT_EMOJI.get(rv["verdict"], "❓")
+                                for rv in round_verdicts
+                            )
                             with print_lock:
                                 sc = active_scans[0]
                                 at = active_triages[0]
-                                ts = datetime.now().strftime("%H:%M:%S")
-                                short_t = t_title[:35] + \
-                                    "..." if len(t_title) > 35 else t_title
+                                ts = datetime.now(
+                                    tz=timezone.utc).strftime("%H:%M:%S")
+                                short_t = (
+                                    t_title[:35] + "..."
+                                    if len(t_title) > 35
+                                    else t_title
+                                )
                                 print(
-                                    f"  {ts}    R{rn}/{triage_rounds} {history} {t_short}: {short_t}  [LLMs running S:{sc} T:{at}]")
+                                    f"  {ts}    R{rn}/{triage_rounds} {history} {t_short}: {short_t}  [LLMs running S:{sc} T:{at}]"
+                                )
 
                         if prior is None:
                             prior = []
@@ -354,9 +395,11 @@ def run_scan(args):
                         prior.append((tv["verdict"], reasoning_with_greps))
 
                     n_valid = sum(
-                        1 for rv in round_verdicts if rv["verdict"] == "VALID")
+                        1 for rv in round_verdicts if rv["verdict"] == "VALID"
+                    )
                     n_invalid = sum(
-                        1 for rv in round_verdicts if rv["verdict"] == "INVALID")
+                        1 for rv in round_verdicts if rv["verdict"] == "INVALID"
+                    )
                     n_total = len(round_verdicts)
                     any_greps = any(rv.get("grep_used")
                                     for rv in round_verdicts)
@@ -376,8 +419,10 @@ def run_scan(args):
                             if len(reasoning) > 500:
                                 summary += "..."
                             crux_m = re.search(
-                                r'CRUX:\s*(.+?)(?:\n|$)', reasoning)
-                            crux = f"\nCRUX: {crux_m.group(1).strip()}" if crux_m else ""
+                                r"CRUX:\s*(.+?)(?:\n|$)", reasoning)
+                            crux = (
+                                f"\nCRUX: {crux_m.group(1).strip()}" if crux_m else ""
+                            )
                             evidence.append(
                                 f"**Round {rv.get('round', '?')} ({rv_emoji} {rv['verdict']}):** "
                                 f"{summary}{crux}"
@@ -390,7 +435,8 @@ def run_scan(args):
                             f"{t_title}\n\n"
                             f"The reported finding:\n{t_text}\n\n"
                             f"Key evidence from {n_total} rounds of analysis:\n"
-                            + "\n".join(evidence[:10]) + "\n\n"
+                            + "\n".join(evidence[:10])
+                            + "\n\n"
                             f"Verdicts so far: {verdicts_str} "
                             f"({n_valid} valid, {n_invalid} invalid)\n\n"
                             f"The relevant source code from {t_display}:\n"
@@ -398,12 +444,15 @@ def run_scan(args):
                             "Based on the code and evidence, is this a "
                             "real security vulnerability? Verify any "
                             "numeric values yourself from the code.\n\n"
-                            + (f"NOTE: All {n_total} prior reviewers said "
-                               "UNCERTAIN or INVALID. Only override to VALID "
-                               "if the evidence is overwhelming and you can "
-                               "justify it clearly.\n\n"
-                               if n_valid == 0 else "") +
-                            "Respond with JSON: "
+                            + (
+                                f"NOTE: All {n_total} prior reviewers said "
+                                "UNCERTAIN or INVALID. Only override to VALID "
+                                "if the evidence is overwhelming and you can "
+                                "justify it clearly.\n\n"
+                                if n_valid == 0
+                                else ""
+                            )
+                            + "Respond with JSON: "
                             '{"verdict": "VALID/INVALID", '
                             '"reasoning": "concise explanation"}'
                         )
@@ -414,11 +463,17 @@ def run_scan(args):
                                 try:
                                     arbiter_resp, _, _ = call_llm(
                                         args.model,
-                                        [{"role": "system",
-                                          "content": "You are an impartial judge. "
-                                          "Decide based on evidence, not arguments."},
-                                         {"role": "user", "content": arbiter_prompt}],
-                                        keys, json_mode=True,
+                                        [
+                                            {
+                                                "role": "system",
+                                                "content": "You are an impartial judge. "
+                                                "Decide based on evidence, not arguments.",
+                                            },
+                                            {"role": "user",
+                                                "content": arbiter_prompt},
+                                        ],
+                                        keys,
+                                        json_mode=True,
                                     )
                                 finally:
                                     with print_lock:
@@ -427,15 +482,18 @@ def run_scan(args):
                             arbiter_parsed = _extract_json(arbiter_resp)
                             if isinstance(arbiter_parsed, dict):
                                 arbiter_verdict = arbiter_parsed.get(
-                                    "verdict", "").upper()
+                                    "verdict", ""
+                                ).upper()
                                 if arbiter_verdict in ("VALID", "INVALID"):
-                                    round_verdicts.append({
-                                        "verdict": arbiter_verdict,
-                                        "reasoning": f"[ARBITER] {arbiter_parsed.get('reasoning', '')}",
-                                        "round": n_total + 1,
-                                        "file": t_display,
-                                        "finding_title": t_title,
-                                    })
+                                    round_verdicts.append(
+                                        {
+                                            "verdict": arbiter_verdict,
+                                            "reasoning": f"[ARBITER] {arbiter_parsed.get('reasoning', '')}",
+                                            "round": n_total + 1,
+                                            "file": t_display,
+                                            "finding_title": t_title,
+                                        }
+                                    )
                                     verdicts_str += "→" + arbiter_verdict[0]
                                     if arbiter_verdict == "VALID":
                                         n_valid += 1
@@ -463,7 +521,8 @@ def run_scan(args):
                     os.makedirs(triage_dir, exist_ok=True)
                     safe_file = t_display.replace("/", "_").replace("\\", "_")
                     safe_title = re.sub(
-                        r'[^\w\-]', '_', final_tv["finding_title"][:40]).strip("_")
+                        r"[^\w\-]", "_", final_tv["finding_title"][:40]
+                    ).strip("_")
 
                     with print_lock:
                         triage_counter[0] += 1
@@ -471,7 +530,8 @@ def run_scan(args):
                         tt = triage_total[0]
 
                     triage_md = os.path.join(
-                        triage_dir, f"T{tc:04d}_{safe_file}_{safe_title}.md")
+                        triage_dir, f"T{tc:04d}_{safe_file}_{safe_title}.md"
+                    )
                     with open(triage_md, "w") as tf:
                         tf.write(
                             f"# Triage T{tc:04d}: {final_tv['finding_title']}\n\n")
@@ -485,18 +545,21 @@ def run_scan(args):
                         for rv in round_verdicts:
                             rv_emoji = VERDICT_EMOJI.get(rv["verdict"], "❓")
                             tf.write(
-                                f"### Round {rv['round']}: {rv_emoji} {rv['verdict']}\n\n")
+                                f"### Round {rv['round']}: {rv_emoji} {rv['verdict']}\n\n"
+                            )
                             reasoning = rv.get("reasoning", "")
                             # Extract and highlight crux
                             crux_match = re.search(
-                                r'CRUX:\s*(.+?)(?:\n|$)', reasoning)
+                                r"CRUX:\s*(.+?)(?:\n|$)", reasoning)
                             if crux_match:
                                 tf.write(
-                                    f"**🎯 Crux:** {crux_match.group(1).strip()}\n\n")
+                                    f"**🎯 Crux:** {crux_match.group(1).strip()}\n\n"
+                                )
                             tf.write(reasoning)
                             if rv.get("grep_results"):
                                 tf.write(
-                                    f"\n\n🔎 **Grep results:**\n\n{rv['grep_results']}")
+                                    f"\n\n🔎 **Grep results:**\n\n{rv['grep_results']}"
+                                )
                             tf.write("\n\n")
 
                     final_tv["triage_md"] = triage_md
@@ -504,15 +567,17 @@ def run_scan(args):
                     with print_lock:
                         sc = active_scans[0]
                         at = active_triages[0]
-                        ts = datetime.now().strftime("%H:%M:%S")
+                        ts = datetime.now(tz=timezone.utc).strftime("%H:%M:%S")
                         load = f"[LLMs running S:{sc} T:{at}]"
                         grep_icon = " 🔎" if any_greps else ""
                         if triage_rounds > 1:
                             print(
-                                f"  {ts} 🔬 [triage {tc}/{tt}] {emoji} {conf_pct}% [{verdicts_str}]{grep_icon} {t_short}: {short_title}  {load}")
+                                f"  {ts} 🔬 [triage {tc}/{tt}] {emoji} {conf_pct}% [{verdicts_str}]{grep_icon} {t_short}: {short_title}  {load}"
+                            )
                         else:
                             print(
-                                f"  {ts} 🔬 [triage {tc}/{tt}] {emoji}{grep_icon} {t_short}: {short_title}  {load}")
+                                f"  {ts} 🔬 [triage {tc}/{tt}] {emoji}{grep_icon} {t_short}: {short_title}  {load}"
+                            )
                         print(f"         📄 {triage_md}")
 
                         if final_tv["verdict"] == "VALID":
@@ -531,9 +596,11 @@ def run_scan(args):
                             _rate = tc / _el * 60 if _el > 0 else 0
                             print(f"\n  {'─' * 58}")
                             print(
-                                f"  📊 Triage: triage {tc}/{tt} done  ⏱️ {_el:.0f}s  ({_rate:.1f}/min)")
+                                f"  📊 Triage: triage {tc}/{tt} done  ⏱️ {_el:.0f}s  ({_rate:.1f}/min)"
+                            )
                             print(
-                                f"     ✅ {_v} valid   ❌ {_i} rejected   ❓ {_u} uncertain")
+                                f"     ✅ {_v} valid   ❌ {_i} rejected   ❓ {_u} uncertain"
+                            )
                             print(f"  {'─' * 58}\n")
 
                     all_triage_results.append(final_tv)
@@ -542,8 +609,12 @@ def run_scan(args):
                     with print_lock:
                         triage_total[0] += 1
                     triage_executor.submit(
-                        _triage_one_finding, title, text, code,
-                        display_name, short_name,
+                        _triage_one_finding,
+                        title,
+                        text,
+                        code,
+                        display_name,
+                        short_name,
                     )
 
         return result
@@ -568,26 +639,36 @@ def run_scan(args):
             max_conn = args.max_connections or (
                 args.parallel + args.triage_parallel)
             print(
-                f"\n⏳ Scans complete. {remaining} triages remaining (full capacity: {max_conn} connections)...")
+                f"\n⏳ Scans complete. {remaining} triages remaining (full capacity: {max_conn} connections)..."
+            )
         triage_executor.shutdown(wait=True)
 
     wall_time = time.time() - scan_start
 
     # Sort results by severity for summary
-    results.sort(key=lambda r: (
-        -r["severities"].get("critical", 0),
-        -r["severities"].get("high", 0),
-        -r["severities"].get("medium", 0),
-    ))
+    results.sort(
+        key=lambda r: (
+            -r["severities"].get("critical", 0),
+            -r["severities"].get("high", 0),
+            -r["severities"].get("medium", 0),
+        )
+    )
 
     # Summary
     crit_files = [r for r in results if r["severities"].get("critical", 0) > 0]
-    high_files = [r for r in results if r["severities"].get(
-        "high", 0) > 0 and r not in crit_files]
-    med_files = [r for r in results if r["severities"].get(
-        "medium", 0) > 0 and r not in crit_files and r not in high_files]
-    clean_files = [r for r in results if sum(
-        r["severities"].values()) == 0 and r["status"] == "ok"]
+    high_files = [
+        r for r in results if r["severities"].get("high", 0) > 0 and r not in crit_files
+    ]
+    med_files = [
+        r
+        for r in results
+        if r["severities"].get("medium", 0) > 0
+        and r not in crit_files
+        and r not in high_files
+    ]
+    clean_files = [
+        r for r in results if sum(r["severities"].values()) == 0 and r["status"] == "ok"
+    ]
     error_files = [r for r in results if r["status"] == "error"]
 
     print()
@@ -617,11 +698,13 @@ def run_scan(args):
         invalid_count = sum(
             1 for t in all_triage_results if t["verdict"] == "INVALID")
         uncertain_count = sum(
-            1 for t in all_triage_results if t["verdict"] == "UNCERTAIN")
+            1 for t in all_triage_results if t["verdict"] == "UNCERTAIN"
+        )
 
         print()
         print(
-            f"🔬 Triage: ✅ {valid_count} valid | ❌ {invalid_count} rejected | ❓ {uncertain_count} uncertain")
+            f"🔬 Triage: ✅ {valid_count} valid | ❌ {invalid_count} rejected | ❓ {uncertain_count} uncertain"
+        )
 
         if valid_count > 0:
             print()
@@ -676,12 +759,21 @@ def run_scan(args):
                         ff.write(all_rounds[0].get("finding_title", ""))
                         ff.write("\n\n")
                         body = next(
-                            (f["body"] for f in parse_findings(
-                                next((r["report"] for r in results
-                                      if r.get("display_name") == t["file"]),
-                                     ""))
-                             if f["title"] in t["finding_title"]
-                             or t["finding_title"] in f["title"]),
+                            (
+                                f["body"]
+                                for f in parse_findings(
+                                    next(
+                                        (
+                                            r["report"]
+                                            for r in results
+                                            if r.get("display_name") == t["file"]
+                                        ),
+                                        "",
+                                    )
+                                )
+                                if f["title"] in t["finding_title"]
+                                or t["finding_title"] in f["title"]
+                            ),
                             None,
                         )
                         if body:
@@ -703,7 +795,8 @@ def run_scan(args):
                     arbiter_emoji = {"V": "✅", "I": "❌"}.get(arbiter_v, "❓")
                     arbiter_str = f" (arbiter: {arbiter_emoji})"
                 print(
-                    f"      {bar} {conf_pct}% [{vs}]{arbiter_str} {t['file']}: {t['finding_title']}")
+                    f"      {bar} {conf_pct}% [{vs}]{arbiter_str} {t['file']}: {t['finding_title']}"
+                )
                 print(f"         📄 {finding_path}")
 
         with open(os.path.join(out_dir, "triage.json"), "w") as f:
@@ -711,21 +804,23 @@ def run_scan(args):
 
         triage_md_path = os.path.join(out_dir, "triage_survivors.md")
         with open(triage_md_path, "w") as f:
-            f.write(f"# nano-analyzer triage survivors\n\n")
+            f.write("# nano-analyzer triage survivors\n\n")
             f.write(f"- **Target**: `{os.path.abspath(args.path)}`\n")
             f.write(f"- **Date**: {timestamp}\n")
             f.write(f"- **Model**: {args.model}\n")
             f.write(f"- **Threshold**: {triage_threshold}+\n")
-            f.write(f"- **Results**: ✅ {valid_count} valid | "
-                    f"❌ {invalid_count} rejected | "
-                    f"❓ {uncertain_count} uncertain\n\n")
+            f.write(
+                f"- **Results**: ✅ {valid_count} valid | "
+                f"❌ {invalid_count} rejected | "
+                f"❓ {uncertain_count} uncertain\n\n"
+            )
             f.write("---\n\n")
             for t in all_triage_results:
                 if t["verdict"] != "VALID":
                     continue
                 f.write(f"## ✅ {t['file']}: {t['finding_title']}\n\n")
-                f.write(f"**Verdict**: VALID\n\n")
-                f.write(f"### Triage reasoning\n\n")
+                f.write("**Verdict**: VALID\n\n")
+                f.write("### Triage reasoning\n\n")
                 f.write(t["reasoning"])
                 f.write("\n\n---\n\n")
 
@@ -760,7 +855,7 @@ def run_scan(args):
 
     # Human-readable summary
     with open(os.path.join(out_dir, "summary.md"), "w") as f:
-        f.write(f"# nano-analyzer scan results\n\n")
+        f.write("# nano-analyzer scan results\n\n")
         f.write(f"- **Target**: `{os.path.abspath(args.path)}`\n")
         f.write(f"- **Date**: {timestamp}\n")
         f.write(f"- **Model**: {args.model}\n")
@@ -771,8 +866,10 @@ def run_scan(args):
         f.write("|------|-------|----------|------|--------|-----|\n")
         for r in results:
             s = r["severities"]
-            f.write(f"| {r['display_name']} | {r.get('lines', 0)} "
-                    f"| {s.get('critical', 0)} | {s.get('high', 0)} "
-                    f"| {s.get('medium', 0)} | {s.get('low', 0)} |\n")
+            f.write(
+                f"| {r['display_name']} | {r.get('lines', 0)} "
+                f"| {s.get('critical', 0)} | {s.get('high', 0)} "
+                f"| {s.get('medium', 0)} | {s.get('low', 0)} |\n"
+            )
 
     print()

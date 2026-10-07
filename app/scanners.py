@@ -1,26 +1,21 @@
+from pathlib import Path
+
+from .constants import SEVERITY_LEVELS
 from .grep import execute_grep_requests
 from .helpers import call_llm
 from .parsers import count_severities
-from dotenv import load_dotenv
-import os
-from pathlib import Path
-from .constants import SEVERITY_LEVELS
 
-context = Path("prompts/CONTEXT.md")
-default = Path("prompts/DEFAULT.md")
-user = Path("prompts/USER.md")
-fewshot = Path('prompts/FEWSHOT_EXAMPLE_ASSISTANT.md')
-fewshot_user = Path('prompts/FEWSHOT_EXAMPLE_USER.md')
+discovery = Path("prompts/discovery.md")
+analysis = Path("prompts/analysis.md")
+role = Path("prompts/role.md")
+fewshot1 = Path("prompts/fewshots/fewshot1.md")
+fewshot2 = Path("prompts/fewshots/fewshot2.md")
 
-CONTEXT_GEN_PROMPT = context.read_text(encoding="utf-8")
-DEFAULT_SYSTEM_PROMPT = default.read_text(encoding="utf-8")
-USER_PROMPT_TEMPLATE = user.read_text(encoding="utf-8")
-FEWSHOT_EXAMPLE_ASSISTANT = fewshot.read_text(encoding="utf-8")
-FEWSHOT_EXAMPLE_USER = fewshot_user.read_text(encoding="utf-8")
-
-# ---------------------------------------------------------------------------
-# Core scan logic (per-file, runs in thread)
-# ---------------------------------------------------------------------------
+DISCOVERY_PROMPT = discovery.read_text(encoding="utf-8")
+ANALYSIS_PROMPT = analysis.read_text(encoding="utf-8")
+ROLE_PROMPT = role.read_text(encoding="utf-8")
+FEWSHOT_1 = fewshot1.read_text(encoding="utf-8")
+FEWSHOT_2 = fewshot2.read_text(encoding="utf-8")
 
 
 def scan_single_file(filepath, code, display_name, model, keys, repo_dir=None):
@@ -34,7 +29,7 @@ def scan_single_file(filepath, code, display_name, model, keys, repo_dir=None):
     try:
         # Stage 1: generate context (with optional grep)
         ctx_messages = [
-            {"role": "system", "content": CONTEXT_GEN_PROMPT},
+            {"role": "system", "content": DISCOVERY_PROMPT},
             {"role": "user", "content": f"File: {display_name}\n\n```\n{code}\n```"},
         ]
         context, ctx_usage, ctx_elapsed = call_llm(model, ctx_messages, keys)
@@ -51,12 +46,17 @@ def scan_single_file(filepath, code, display_name, model, keys, repo_dir=None):
 
         # Stage 2: vulnerability scan (with few-shot example)
         scan_messages = [
-            {"role": "system", "content": DEFAULT_SYSTEM_PROMPT + "\n\n"
-             "Security context for the file being analyzed:\n" + context},
-            {"role": "user", "content": FEWSHOT_EXAMPLE_USER},
-            {"role": "assistant", "content": FEWSHOT_EXAMPLE_ASSISTANT},
-            {"role": "user", "content": USER_PROMPT_TEMPLATE.format(
-                filepath=display_name, code=code)},
+            {
+                "role": "system",
+                "content": ANALYSIS_PROMPT + "\n\n"
+                "Security context for the file being analyzed:\n" + context,
+            },
+            {"role": "user", "content": FEWSHOT_2},
+            {"role": "assistant", "content": FEWSHOT_1},
+            {
+                "role": "user",
+                "content": ROLE_PROMPT.format(filepath=display_name, code=code),
+            },
         ]
         report, scan_usage, scan_elapsed = call_llm(model, scan_messages, keys)
         result["report"] = report

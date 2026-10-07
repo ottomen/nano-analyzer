@@ -4,8 +4,6 @@
 
 ![aisle-nano-analyzer-diagram](aisle-nano-analyzer.png)
 
-> **Research prototype for demonstration purposes.** This is a simple, single-file harness that is able to detect real zero-day vulnerabilities. Note that it is a prototype, biased towards C/C++ memory safety bugs, and will produce false positives. We are sharing it as-is in the spirit of open research — expect sharp corners.
-
 ## What it does
 
 Nano-analyzer is a simple single-file Python scanner that sends source code through a three-stage LLM pipeline:
@@ -18,9 +16,9 @@ Results are saved as Markdown and JSON files for human review.
 
 ## Current limitations
 
-This is a v0.1 prototype. Please keep the following in mind:
+This is a v0.1.0 prototype. Please keep the following in mind:
 
-- **C/C++ bias.** The prompts, few-shot examples, and heuristics are heavily tuned for C/C++ memory safety vulnerabilities (buffer overflows, NULL derefs, integer overflows, type confusion). It will scan other languages but is much less effective there.
+- **Bias.** The prompts, few-shot examples, and heuristics are heavily tuned for Electron apps vulnerabilities.
 - **False positives.** Even with multi-round triage, expect findings that don't hold up on closer inspection. Always verify manually.
 - **False negatives.** The scanner can miss entire vulnerability classes — logic bugs, race conditions, cryptographic issues, authentication bypasses, etc. A clean scan does not mean the code is safe.
 - **Single-file analysis.** Each file is scanned independently. Cross-file vulnerabilities that depend on interactions between compilation units will likely be missed.
@@ -30,7 +28,7 @@ This is a v0.1 prototype. Please keep the following in mind:
 
 ### Requirements
 
-- Python 3.8+
+- Python 3.9+
 - An OpenAI API key (for OpenAI models) or an OpenRouter API key (for other providers)
 - Optional: [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) for triage grep lookups
 - Optional: [Google codesearch](https://github.com/google/codesearch) (`csearch`/`cindex`) for faster grep on large repos
@@ -38,10 +36,8 @@ This is a v0.1 prototype. Please keep the following in mind:
 ### Install
 
 ```bash
-git clone https://github.com/weareaisle/nano-analyzer.git
-cd nano-analyzer
-# No dependency installation needed. Run directly:
-python3 scan.py --help
+uv sync
+uv run python -m app --help
 ```
 
 ### API keys
@@ -64,52 +60,70 @@ The scanner determines which key to use based on the model name: if it contains 
 
 ```bash
 # Scan a single file
-python3 scan.py ./path/to/file.c
+uv run python -m app ./path/to/file.ts
 
 # Scan a directory recursively
-python3 scan.py ./path/to/src/
+uv run python -m app ./path/to/src/
 ```
 
 ### Common options
 
 ```bash
 # Use a different model
-python3 scan.py ./src --model gpt-5.4
+uv run python -m app ./src --model gpt-5.4
 
 # Control parallelism
-python3 scan.py ./src --parallel 30
+uv run python -m app ./src --parallel 30
 
 # Point triage grep at the full repo root (useful when scanning a subdirectory)
-python3 scan.py ./lib/crypto/ --repo-dir ./
+uv run python -m app ./lib/crypto/ --repo-dir ./
 
 # Only surface high-confidence findings
-python3 scan.py ./src --min-confidence 0.7
+uv run python -m app ./src --min-confidence 0.7
 
 # More triage rounds for higher accuracy (default: 5)
-python3 scan.py ./src --triage-rounds 7
+uv run python -m app ./src --triage-rounds 7
+```
+
+### Dockered setup
+
+Run:
+
+```bash
+mkdir -p scan-results
+
+docker build -t nano-analyzer .
+
+docker run --rm \
+  -e OPENAI_API_KEY \
+  -e OPENAI_API_URL \
+  -e DEFAULT_MODEL \
+  --mount "type=bind,src=$PWD/target-repo,dst=/source,readonly" \
+  --mount "type=bind,src=$PWD/scan-results,dst=/results" \
+  nano-analyzer /source --output-dir /results
 ```
 
 ### All flags
 
-| Flag                 | Default                                | Description                                                                   |
-| -------------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
-| `path`               | _(required)_                           | File or directory to scan                                                     |
-| `--model`            | `gpt-5.4-nano`                         | Model for all stages (context, scan, triage)                                  |
-| `--parallel`         | `50`                                   | Max concurrent scan API calls                                                 |
-| `--triage-threshold` | `medium`                               | Triage findings at or above this severity                                     |
-| `--triage-rounds`    | `5`                                    | Triage rounds per finding                                                     |
-| `--triage-parallel`  | `50`                                   | Max concurrent triage API calls                                               |
-| `--max-connections`  | `parallel + triage-parallel`           | Total API call cap                                                            |
-| `--min-confidence`   | `0.0`                                  | Only show findings above this confidence (0.0–1.0)                            |
-| `--project`          | directory name                         | Project name used in triage prompts                                           |
-| `--repo-dir`         | auto                                   | Repo root for grep lookups (auto: parent dir for files, scan dir for folders) |
-| `--output-dir`       | `~/nano-analyzer-results/<timestamp>/` | Where to save results                                                         |
-| `--max-chars`        | `200,000`                              | Skip files larger than this                                                   |
-| `--verbose-triage`   | off                                    | Show per-round triage progress                                                |
+| Flag                 | Default                           | Description                                                                   |
+| -------------------- | --------------------------------- | ----------------------------------------------------------------------------- |
+| `path`               | _(required)_                      | File or directory to scan                                                     |
+| `--model`            | `gpt-6-luna`                      | Model for all stages (context, scan, triage)                                  |
+| `--parallel`         | `50`                              | Max concurrent scan API calls                                                 |
+| `--triage-threshold` | `medium`                          | Triage findings at or above this severity                                     |
+| `--triage-rounds`    | `5`                               | Triage rounds per finding                                                     |
+| `--triage-parallel`  | `50`                              | Max concurrent triage API calls                                               |
+| `--max-connections`  | `parallel + triage-parallel`      | Total API call cap                                                            |
+| `--min-confidence`   | `0.0`                             | Only show findings above this confidence (0.0–1.0)                            |
+| `--project`          | directory name                    | Project name used in triage prompts                                           |
+| `--repo-dir`         | auto                              | Repo root for grep lookups (auto: parent dir for files, scan dir for folders) |
+| `--output-dir`       | `./analyzer-results/<timestamp>/` | Where to save results                                                         |
+| `--max-chars`        | `200,000`                         | Skip files larger than this                                                   |
+| `--verbose-triage`   | off                               | Show per-round triage progress                                                |
 
 ## Output
 
-Results are saved to `./nano-analyzer-results/<timestamp>/` (or `--output-dir`):
+Results are saved to `./analyzer-results/<timestamp>/` (or `--output-dir`):
 
 ```
 <timestamp>/

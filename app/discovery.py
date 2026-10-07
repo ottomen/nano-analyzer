@@ -1,9 +1,5 @@
 import os
 
-# ---------------------------------------------------------------------------
-# File discovery
-# ---------------------------------------------------------------------------
-
 
 def discover_files(path, extensions, max_chars):
     """Walk a path (file or dir) and return (scannable, skipped) lists."""
@@ -51,10 +47,12 @@ def discover_files(path, extensions, max_chars):
             skipped.append((filepath, f"too large ({char_count:,} chars)"))
             continue
 
-        scannable.append({
-            "filepath": filepath,
-            "lines": line_count,
-            "chars": char_count,
-        })
+        scannable.append(
+            {
+                "filepath": filepath,
+                "lines": line_count,
+                "chars": char_count,
+            }
+        )
 
     return scannable, skipped

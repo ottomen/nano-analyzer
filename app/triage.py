@@ -1,19 +1,29 @@
 import re
+from pathlib import Path
 
 from .helpers import call_llm
 from .parsers import _extract_json
-from pathlib import Path
 
-triage_template = Path('prompts/TRIAGE.md')
+triage_template = Path("prompts/triage.md")
 
-TRIAGE_PROMPT_TEMPLATE = triage_template.read_text(encoding="utf-8")
+TRIAGE_PROMPT = triage_template.read_text(encoding="utf-8")
 
 
-def triage_finding(finding_title, finding_text, code, filepath,
-                   project_name, model, keys, prior_reasoning=None,
-                   repo_dir=None, reasoning_effort=None, file_context=None):
+def triage_finding(
+    finding_title,
+    finding_text,
+    code,
+    filepath,
+    project_name,
+    model,
+    keys,
+    prior_reasoning=None,
+    repo_dir=None,
+    reasoning_effort=None,
+    file_context=None,
+):
     """Stage 3: Skeptical triage of a single finding. Returns verdict dict."""
-    prompt = TRIAGE_PROMPT_TEMPLATE.format(
+    prompt = TRIAGE_PROMPT.format(
         project_name=project_name,
         finding=finding_text,
         filepath=filepath,
@@ -45,25 +55,29 @@ def triage_finding(finding_title, finding_text, code, filepath,
             prompt += f"**Reviewer {i}**:\n{reasoning}\n\n"
 
     messages = [
-        {"role": "system", "content": "You are a security engineer triaging "
-         "vulnerability reports. For each finding, answer: "
-         "(1) Is the bug pattern real in the code? "
-         "(2) Can an attacker reach it through untrusted input? Trace "
-         "the data flow backward from the bug to its origin. "
-         "(3) If a defense is cited, is it actually sufficient? If you "
-         "find a numeric constant, grep for its value before concluding. "
-         "(4) Even if the bug is real, is it security-relevant? A data "
-         "race on diagnostic state, a missing NULL check on an internal "
-         "API that only trusted callers use, or undefined behavior only "
-         "in debug builds are code quality issues, NOT security "
-         "vulnerabilities — mark these INVALID. "
-         "Use GREP to verify. Do not guess."},
+        {
+            "role": "system",
+            "content": "You are a security engineer triaging "
+            "vulnerability reports. For each finding, answer: "
+            "(1) Is the bug pattern real in the code? "
+            "(2) Can an attacker reach it through untrusted input? Trace "
+            "the data flow backward from the bug to its origin. "
+            "(3) If a defense is cited, is it actually sufficient? If you "
+            "find a numeric constant, grep for its value before concluding. "
+            "(4) Even if the bug is real, is it security-relevant? A data "
+            "race on diagnostic state, a missing NULL check on an internal "
+            "API that only trusted callers use, or undefined behavior only "
+            "in debug builds are code quality issues, NOT security "
+            "vulnerabilities — mark these INVALID. "
+            "Use GREP to verify. Do not guess.",
+        },
         {"role": "user", "content": prompt},
     ]
 
     try:
-        response, usage, elapsed = call_llm(model, messages, keys, json_mode=True,
-                                            reasoning_effort=reasoning_effort)
+        response, usage, elapsed = call_llm(
+            model, messages, keys, json_mode=True, reasoning_effort=reasoning_effort
+        )
 
         verdict = "UNCERTAIN"
         reasoning = response
@@ -80,13 +94,13 @@ def triage_finding(finding_title, finding_text, code, filepath,
 
             grep_req = parsed.get("grep", "")
             if grep_req:
-                grep_req = re.sub(r'^GREP:\s*', '', grep_req,
+                grep_req = re.sub(r"^GREP:\s*", "", grep_req,
                                   flags=re.IGNORECASE)
-                grep_req = grep_req.strip('`"\'')
+                grep_req = grep_req.strip("`\"'")
                 if grep_req:
                     reasoning += f"\nGREP: {grep_req}"
         else:
-            clean = re.sub(r'[*#\-\s]+', ' ', response[:300]).strip().upper()
+            clean = re.sub(r"[*#\-\s]+", " ", response[:300]).strip().upper()
             if "INVALID" in clean[:30]:
                 verdict = "INVALID"
             elif "VALID" in clean[:30]:
